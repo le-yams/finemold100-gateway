@@ -6,6 +6,7 @@ toolchain go1.24.10
 
 require (
 	github.com/soypat/natiu-mqtt v0.6.0
+	golang.org/x/net v0.33.0
 	tinygo.org/x/drivers v0.33.0
 )
 
