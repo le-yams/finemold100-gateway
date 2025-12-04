@@ -1,7 +1,9 @@
 ﻿package fm100
 
 import (
+	"github.com/le-yams/finemold100-gateway/ble"
 	"github.com/le-yams/finemold100-gateway/hamqtt"
+	"tinygo.org/x/bluetooth"
 )
 
 const (
@@ -9,24 +11,20 @@ const (
 )
 
 var (
-	deviceMAC  string
-	deviceID   string
-	deviceName = "FM100B"
+	DeviceMAC string
+	DeviceID  string
 
-	deviceConfigTopic = "homeassistant/device/" + deviceID + "/config"
+	bleDevice *bluetooth.Device
+
+	DeviceName = "FM100B"
+
+	deviceConfigTopic = "homeassistant/device/" + DeviceID + "/config"
 
 	probesStateTopic = map[uint8]string{
-		1: "fm100/" + deviceID + "/probe01/state",
-		2: "fm100/" + deviceID + "/probe02/state",
-		3: "fm100/" + deviceID + "/probe03/state",
-		4: "fm100/" + deviceID + "/probe04/state",
-	}
-
-	probesChannel = map[uint8]chan *string{
-		1: make(chan *string),
-		2: make(chan *string),
-		3: make(chan *string),
-		4: make(chan *string),
+		1: "fm100/" + DeviceID + "/probe01/state",
+		2: "fm100/" + DeviceID + "/probe02/state",
+		3: "fm100/" + DeviceID + "/probe03/state",
+		4: "fm100/" + DeviceID + "/probe04/state",
 	}
 
 	probesID = map[uint8]string{
@@ -45,8 +43,8 @@ var (
 
 	deviceConfig = `{
   "dev": {
-    "ids":"` + deviceID + `",
-    "name": "` + deviceName + `",
+    "ids":"` + DeviceID + `",
+    "name": "` + DeviceName + `",
   },
   "o": {
     "name": "` + ClientName + `",
@@ -76,14 +74,120 @@ func homeAssistantProbeConfig(probe uint8) string {
       "p": "sensor",
       "device_class": "temperature",
       "unit_of_measurement": "°C",
-      "unique_id": "` + deviceID + probeID + `",
+      "unique_id": "` + DeviceID + probeID + `",
       "value_template":"{{ value_json.temperature}}",
       "state_class": "measurement",
-      "state_topic": "` + "fm100/" + deviceID + "/probe" + probeID + "/state" + `"
+      "state_topic": "` + "fm100/" + DeviceID + "/probe" + probeID + "/state" + `"
     }
 `
 }
 
 func PublishProbeValue(client *hamqtt.Client, probe uint8, value string) error {
 	return client.Publish(probesStateTopic[probe], []byte(`{"temperature":`+value+`}`), false)
+}
+
+var bleServiceUUIDName = bluetooth.New16BitUUID(0x1800)
+var bleCharacteristicName = bluetooth.New16BitUUID(0x2A00)
+
+var bleServiceUUIDInfo = bluetooth.New16BitUUID(0x180A)
+var bleCharacteristicModel = bluetooth.New16BitUUID(0x2A24)
+var bleCharacteristicSerial = bluetooth.New16BitUUID(0x2A25)
+var bleCharacteristicHardware = bluetooth.New16BitUUID(0x2A27)
+var bleCharacteristicSoftware = bluetooth.New16BitUUID(0x2A28)
+var bleCharacteristicManufacturer = bluetooth.New16BitUUID(0x2A29)
+
+var bleServiceUUIDThermo = bluetooth.New16BitUUID(0xFF00)
+var bleCharacteristicNotify = bluetooth.New16BitUUID(0xFF01)
+var bleCharacteristicWrite = bluetooth.New16BitUUID(0xFF01)
+
+func ConnectBLE(client *hamqtt.Client) error {
+	adapter := bluetooth.DefaultAdapter
+	err := adapter.Enable()
+	if err != nil {
+		return err
+	}
+
+	macAddress := bluetooth.MACAddress{}
+	macAddress.Set(DeviceMAC)
+
+	adapter.SetConnectHandler(func(device bluetooth.Device, connected bool) {
+		bleDevice = &device
+		status := "disconnected"
+		if connected {
+			println("BLE device connection handler for device", bleDevice.Address.String())
+			onDeviceConnect()
+		}
+		println("BLE Device", status)
+	})
+
+	println("connecting to BLE device:", DeviceMAC)
+	_, err = adapter.Connect(bluetooth.Address{MACAddress: macAddress}, bluetooth.ConnectionParams{})
+
+	return err
+}
+
+func onDeviceConnect() {
+	chars, err := ble.GetCharacteristics(bleDevice, bleServiceUUIDName, bleCharacteristicName)
+	if err != nil {
+		println("could not get device name characteristic", err.Error())
+		return
+	}
+	println("found", len(chars), "characteristics")
+	for i, c := range chars {
+		if c.UUID().String() == bleCharacteristicName.String() {
+			println("reading characteristic", i)
+			name, err := ble.ReadCharacteristicAsString(c)
+			if err != nil {
+				println("could not read device name characteristic", err.Error())
+				return
+			}
+			println("connected to device:", name)
+		} else {
+			println("skipping characteristic", i, "with UUID", c.UUID().String())
+		}
+
+	}
+
+	chars, err = ble.GetCharacteristics(bleDevice, bleServiceUUIDInfo, bleCharacteristicModel, bleCharacteristicSerial, bleCharacteristicHardware, bleCharacteristicSoftware, bleCharacteristicManufacturer)
+	if err != nil {
+		println("could not get device info characteristics", err.Error())
+		return
+	}
+	println("found", len(chars), "characteristics")
+	for _, c := range chars {
+		println("reading characteristic", c.UUID().String())
+		value, err := ble.ReadCharacteristicAsString(c)
+		if err != nil {
+			println("could not read device info characteristic", err.Error())
+			return
+		}
+
+		println("device info:", value)
+
+	}
+
+	chars, err = ble.GetCharacteristics(bleDevice, bleServiceUUIDThermo, bleCharacteristicNotify)
+	if err != nil {
+		println("could not get thermo characteristics", err.Error())
+		return
+	}
+	println("found", len(chars), "characteristics in thermo service")
+	for i, c := range chars {
+		if c.UUID().String() == bleCharacteristicNotify.String() {
+			println("subscribing to characteristic", c.UUID().String())
+			err = c.EnableNotifications(onThermoNotification)
+			if err != nil {
+				println("could not subscribe to thermo notification characteristic", err.Error())
+				return
+			}
+			println("subscribed to thermo notifications")
+		} else {
+			println("skipping characteristic", i, "with UUID", c.UUID().String())
+		}
+
+	}
+}
+
+func onThermoNotification(value []byte) {
+	println("received thermo notification:", value)
 }

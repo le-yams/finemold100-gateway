@@ -2,14 +2,13 @@
 
 import (
 	"machine"
-	"math/rand"
-	"strconv"
 	"time"
 
+	"github.com/le-yams/finemold100-gateway/ble"
 	"github.com/le-yams/finemold100-gateway/fm100"
-	"github.com/le-yams/finemold100-gateway/hamqtt"
-	"tinygo.org/x/drivers/netlink"
-	"tinygo.org/x/drivers/netlink/probe"
+	//"github.com/le-yams/finemold100-gateway/hamqtt"
+	//"tinygo.org/x/drivers/netlink"
+	//"tinygo.org/x/drivers/netlink/probe"
 )
 
 var (
@@ -32,6 +31,11 @@ func main() {
 	// Wait a bit for console
 	time.Sleep(2 * time.Second)
 
+	println("FineMold100 Gateway starting...")
+	println("device id:", fm100.DeviceID)
+	println("device name:", fm100.DeviceName)
+	println("device mac address:", fm100.DeviceMAC)
+
 	// Configure UART
 	err := uart.Configure(machine.UARTConfig{TX: tx, RX: rx})
 	if err != nil {
@@ -43,37 +47,46 @@ func main() {
 
 	// Connecting to Wi-Fi
 	ledBlinkWhile(led, func() bool { return wifiStatus == 0 }, 500*time.Millisecond, 500*time.Millisecond)
-	link, _ := probe.Probe()
-	err = link.NetConnect(&netlink.ConnectParams{
-		Ssid:       ssid,
-		Passphrase: password,
-	})
+	//link, _ := probe.Probe()
+	//err = link.NetConnect(&netlink.ConnectParams{
+	//	Ssid:       ssid,
+	//	Passphrase: password,
+	//})
+	//if err != nil {
+	//	wifiStatus = -1
+	//	println(err.Error())
+	//	return
+	//}
+	//wifiStatus = 1
+	//println("connected to wifi network:", ssid)
+	//
+	//// Connecting to MQTT broker
+	//ledBlinkWhile(led, func() bool { return mqttStatus == 0 }, 200*time.Millisecond, 200*time.Millisecond)
+	//client, err := hamqtt.Connect(fm100.ClientName, mqttServer, mqttUsername, mqttPassword, 4*time.Second)
+	//mqttStatus = 1
+	//if err != nil {::::::::::::
+	//	led.Low()
+	//	println("could not initialize MQTT client:", err.Error())
+	//	return
+	//}
+	//println("connected to MQTT broker", mqttServer)
+	//
+	//err = fm100.PublishDeviceConfig(client)
+	//if err != nil {
+	//	println("could not publish device config:", err.Error())
+	//	return
+	//}
+
+	time.Sleep(10 * time.Second)
+	err = ble.Scan(10 * time.Second)
 	if err != nil {
-		wifiStatus = -1
-		println(err.Error())
+		println("could not scan for BLE devices:", err.Error())
 		return
 	}
-	wifiStatus = 1
-	println("connected to wifi network:", ssid)
-
-	// Connecting to MQTT broker
-	ledBlinkWhile(led, func() bool { return mqttStatus == 0 }, 200*time.Millisecond, 200*time.Millisecond)
-	client, err := hamqtt.Connect(fm100.ClientName, mqttServer, mqttUsername, mqttPassword, 4*time.Second)
-	mqttStatus = 1
-	if err != nil {
-		led.Low()
-		println("could not initialize MQTT client:", err.Error())
-		return
-	}
-	println("connected to MQTT broker", mqttServer)
-
-	err = fm100.PublishDeviceConfig(client)
-	if err != nil {
-		println("could not publish device config:", err.Error())
-		return
-	}
-
-	publishSomeFakeData(client)
+	//err = fm100.ConnectBLE(nil)
+	//if err != nil {
+	//	println("could not connect to FineMold100 device:", err.Error())
+	//}
 
 	println("done.")
 	led.Low()
@@ -89,32 +102,4 @@ func ledBlinkWhile(led machine.Pin, condition func() bool, highDelay time.Durati
 		}
 		led.High()
 	}()
-}
-
-func publishSomeFakeData(client *hamqtt.Client) {
-
-	// Simulate FM100 device, in real implementation read from BLE
-	loops := 0
-	i := 0
-	probeNumber := uint8(0)
-	time.Sleep(5 * time.Second)
-	println("starting loop to fake probe data")
-	for loops < 10 {
-		probeNumber = (probeNumber % 4) + 1
-
-		d := 20 + rand.Intn(30)
-		i = (i + 1) % 10
-
-		v := strconv.Itoa(d) + "." + strconv.Itoa(i)
-
-		println("faking probe", probeNumber, "data:", v)
-
-		err := fm100.PublishProbeValue(client, probeNumber, v)
-		if err != nil {
-			println("could not publish probe", probeNumber, " value:", err.Error())
-		}
-
-		time.Sleep(2 * time.Second)
-		loops++
-	}
 }
